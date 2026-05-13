@@ -69,7 +69,17 @@ The optimizer does not just flag — it rewrites:
 
 ## Installation
 
-### Claude Code
+### Claude Code — one command
+
+```bash
+claude mcp add agent-lint -- npx -y @serdaraytac/agent-lint
+```
+
+That's it. Claude Code fetches and runs the server automatically — no clone, no build step.
+
+### Other MCP clients (Cursor, Windsurf, Cline, etc.)
+
+Add to your MCP config:
 
 ```json
 {
@@ -82,14 +92,22 @@ The optimizer does not just flag — it rewrites:
 }
 ```
 
-### Cursor / Windsurf / other MCP clients
+### Install from GitHub instead of npm
+
+Replace the npm package name with the GitHub repo — same single line:
+
+```bash
+claude mcp add agent-lint -- npx -y github:serdaraytac/agent-lint
+```
+
+Or in JSON config:
 
 ```json
 {
   "mcpServers": {
     "agent-lint": {
       "command": "npx",
-      "args": ["-y", "@serdaraytac/agent-lint"]
+      "args": ["-y", "github:serdaraytac/agent-lint"]
     }
   }
 }

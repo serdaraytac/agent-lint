@@ -1,12 +1,13 @@
 {
   "name": "@serdaraytac/agent-lint",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Analyze, score, and optimize AI coding agent config files",
   "main": "dist/mcp-server.js",
   "bin": {
     "agent-lint": "dist/mcp-server.js"
   },
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc",
     "dev": "tsx src/mcp-server.ts",
     "test": "vitest run",
