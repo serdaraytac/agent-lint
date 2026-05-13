@@ -1,6 +1,6 @@
 {
   "name": "@serdaraytac/agent-lint",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Analyze, score, and optimize AI coding agent config files",
   "main": "dist/mcp-server.js",
   "bin": {
@@ -32,11 +32,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/serdaraytac/md-analyzer.git"
+    "url": "git+https://github.com/serdaraytac/agent-lint.git"
   },
-  "homepage": "https://github.com/serdaraytac/md-analyzer#readme",
+  "homepage": "https://github.com/serdaraytac/agent-lint#readme",
   "bugs": {
-    "url": "https://github.com/serdaraytac/md-analyzer/issues"
+    "url": "https://github.com/serdaraytac/agent-lint/issues"
   },
   "engines": {
     "node": ">=22"

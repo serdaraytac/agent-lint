@@ -76,7 +76,7 @@ The optimizer does not just flag — it rewrites:
   "mcpServers": {
     "agent-lint": {
       "command": "npx",
-      "args": ["-y", "agent-lint"]
+      "args": ["-y", "@serdaraytac/agent-lint"]
     }
   }
 }
@@ -89,7 +89,7 @@ The optimizer does not just flag — it rewrites:
   "mcpServers": {
     "agent-lint": {
       "command": "npx",
-      "args": ["-y", "agent-lint"]
+      "args": ["-y", "@serdaraytac/agent-lint"]
     }
   }
 }
