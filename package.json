@@ -1,0 +1,53 @@
+{
+  "name": "@serdaraytac/agent-lint",
+  "version": "1.0.0",
+  "description": "Analyze, score, and optimize AI coding agent config files",
+  "main": "dist/mcp-server.js",
+  "bin": {
+    "agent-lint": "dist/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/mcp-server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "cursor",
+    "ai-agent",
+    "config",
+    "analyzer",
+    "llm",
+    "coding-agent"
+  ],
+  "author": "serdaraytac",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/serdaraytac/md-analyzer.git"
+  },
+  "homepage": "https://github.com/serdaraytac/md-analyzer#readme",
+  "bugs": {
+    "url": "https://github.com/serdaraytac/md-analyzer/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}
