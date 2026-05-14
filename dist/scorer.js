@@ -50,7 +50,6 @@ function scoreTokenEfficiency(result) {
     let score = 25;
     // DETAIL (arXiv:2512.02246): specific prompts avg 124 tokens, vague ones avg 57.
     // "Too long" thresholds scale proportionally with the platform's context window.
-    // Baseline is 200k tokens (Claude Code); cap scale factor at 5× to stay sensible.
     const scaleFactor = Math.min(contextWindowTokens / 200_000, 5);
     const thresholdModerate = Math.round(1_000 * scaleFactor);
     const thresholdHeavy = Math.round(2_000 * scaleFactor);
@@ -67,6 +66,16 @@ function scoreTokenEfficiency(result) {
     else if (tokenCount > thresholdModerate)
         score -= 3;
     score -= Math.min(10, duplicatePhrases.length * 3);
+    // Codex enforces a hard 32 KiB (≈8,192 token) truncation limit — content beyond it is silently
+    // dropped. This is qualitatively different from soft verbosity: the agent never sees the rules.
+    // Penalize separately from the generic window scaling above.
+    if (result.platform === "codex") {
+        const CODEX_HARD_LIMIT_TOKENS = 8_192; // 32,768 bytes / 4 chars per token
+        if (tokenCount > CODEX_HARD_LIMIT_TOKENS)
+            score -= 10;
+        else if (tokenCount > CODEX_HARD_LIMIT_TOKENS * 0.8)
+            score -= 5;
+    }
     return clamp(score);
 }
 function scoreCoverage(result) {
@@ -80,6 +89,13 @@ function scoreCoverage(result) {
     const { criticalInHead, criticalInTail } = result.checks.attentionPlacement;
     if (criticalInHead || criticalInTail)
         score = Math.min(25, score + 3);
+    // Claude Code: runnable commands are the highest-value content in CLAUDE.md — without them
+    // Claude must spend tokens discovering build/test/lint commands on every session.
+    if (result.platform === "claude") {
+        const missingBuildCommands = result.checks.formatCompliance.issues.some((i) => i.code === "CLAUDE_MISSING_BUILD_COMMANDS");
+        if (missingBuildCommands)
+            score -= 5;
+    }
     return clamp(score);
 }
 function toGrade(overall) {

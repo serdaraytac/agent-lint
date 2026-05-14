@@ -86,17 +86,192 @@ function fixVagueRules(content) {
     }
     return { content: result, replacements };
 }
+// Platform-specific hints for each expected section — replaces generic TODO comments.
+const SECTION_HINTS = {
+    claude: {
+        commands: "```bash\n# [TODO: build command, e.g. npm run build]\n# [TODO: test command, e.g. npm test]\n# [TODO: lint command, e.g. npm run lint]\n```",
+        architecture: "<!-- Key directories, main modules, and design decisions -->",
+        rules: "<!-- Coding conventions and hard requirements for this project -->",
+        style: "<!-- Formatting, naming, and style guide references -->",
+    },
+    codex: {
+        conventions: "<!-- Naming rules, code style, and working agreements for this repo -->",
+        testing: "<!-- Test framework, coverage requirements, and how to run tests -->",
+        architecture: "<!-- Repository structure, key modules, and design decisions -->",
+        "pr-instructions": "<!-- PR title format, review process, and merge criteria -->",
+    },
+    cursor: {
+        rules: "<!-- Directives that apply to every file Cursor edits -->",
+        style: "<!-- Formatting, naming, and code style conventions -->",
+        context: "<!-- Background the model needs to understand this codebase -->",
+    },
+    cline: {
+        rules: "<!-- Each rule on its own bullet — be specific, not vague -->",
+        context: "<!-- Project background, stack, and key dependencies -->",
+    },
+    gemini: {
+        instructions: "<!-- Primary directives — Gemini reads these on every turn -->",
+        context: "<!-- Project overview; use @./context.md to split large sections -->",
+        constraints: "<!-- Hard boundaries: what Gemini must never do -->",
+    },
+    copilot: {
+        instructions: "<!-- Directives for GitHub Copilot — keep under 4,000 characters for code review -->",
+        style: "<!-- Formatting and naming conventions -->",
+    },
+    amp: {
+        conventions: "<!-- Coding standards; reference files with @./path/to/guide.md -->",
+        testing: "<!-- Test requirements and how to run the test suite -->",
+    },
+    opencode: {
+        rules: "<!-- Project rules — AGENTS.md at root; compose extras via opencode.json 'instructions' -->",
+    },
+};
 function addMissingSectionStubs(content, missingSections, platform) {
     if (missingSections.length === 0)
         return { content, added: [] };
+    const platformHints = SECTION_HINTS[platform] ?? {};
     const stubs = [];
     const added = [];
     for (const section of missingSections) {
         const capitalized = section.charAt(0).toUpperCase() + section.slice(1);
-        stubs.push(`\n## ${capitalized}\n<!-- TODO: Add ${section} guidance for ${platform} -->`);
+        const hint = platformHints[section] ?? `<!-- TODO: Add ${section} guidance -->`;
+        stubs.push(`\n## ${capitalized}\n${hint}`);
         added.push(section);
     }
     return { content: content + stubs.join("\n"), added };
+}
+// Converts non-heading, non-bullet prose lines to bullet list format.
+// Used for Cline where docs explicitly recommend "bullet points make individual requirements clear".
+function proseTooBullets(lines) {
+    let converted = 0;
+    let insideBlock = false;
+    const result = lines.map((line) => {
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            return line;
+        }
+        if (insideBlock)
+            return line;
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("-") && !trimmed.startsWith("*") && !trimmed.startsWith(">") && !trimmed.startsWith("|")) {
+            converted++;
+            return `- ${trimmed}`;
+        }
+        return line;
+    });
+    return { lines: result, converted };
+}
+// Fixes @ import paths that are missing a required prefix.
+// Gemini CLI and Amp both require ./ ../ / or ~/ — bare @word is not resolved.
+function fixAtImportPaths(lines) {
+    let fixed = 0;
+    let insideBlock = false;
+    const BARE_AT = /@(?!\.\/|\.\.\/|\/|~\/)([^\s,*@]+)/g;
+    const result = lines.map((line) => {
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            return line;
+        }
+        if (insideBlock)
+            return line;
+        const replaced = line.replace(BARE_AT, (_, path) => { fixed++; return `@./${path}`; });
+        return replaced;
+    });
+    return { lines: result, fixed };
+}
+function applyPlatformOptimizations(content, config, issues) {
+    const changes = [];
+    const hasCodes = (...codes) => codes.some((c) => issues.some((i) => i.code === c));
+    let lines = content.split("\n");
+    switch (config.platform) {
+        case "claude": {
+            // Add Commands section with runnable stub when no build/test commands are found
+            if (hasCodes("CLAUDE_MISSING_BUILD_COMMANDS")) {
+                const stub = [
+                    "",
+                    "## Commands",
+                    "```bash",
+                    "# [TODO: build command, e.g. npm run build]",
+                    "# [TODO: test command, e.g. npm test]",
+                    "# [TODO: lint command, e.g. npm run lint]",
+                    "```",
+                    "",
+                ];
+                lines = [...lines, ...stub];
+                changes.push("Added Commands section stub — fill in build, test, and lint commands so Claude Code can run them without discovery overhead");
+            }
+            // Flag unfilled placeholders — cannot auto-fix without project-specific context
+            if (hasCodes("CLAUDE_PLACEHOLDER_FOUND")) {
+                const count = (content.match(/\[TODO:/g) ?? []).length;
+                changes.push(`Found ${count} unfilled [TODO:] placeholder(s) — fill these in before relying on this config`);
+            }
+            break;
+        }
+        case "cursor": {
+            // Prepend frontmatter stub to .cursor/rules/ files that are missing it
+            if (hasCodes("CURSOR_MISSING_FRONTMATTER")) {
+                const stub = [
+                    "---",
+                    "description: [TODO: describe when this rule applies]",
+                    "globs: []",
+                    "alwaysApply: false",
+                    "---",
+                    "",
+                ];
+                lines = [...stub, ...lines];
+                changes.push("Added Cursor rule frontmatter stub — set 'globs' or 'alwaysApply: true' to control scope");
+            }
+            break;
+        }
+        case "cline": {
+            // Convert unstructured prose to bullet points
+            if (hasCodes("CLINE_UNSTRUCTURED_RULES")) {
+                const { lines: bulleted, converted } = proseTooBullets(lines);
+                if (converted > 0) {
+                    lines = bulleted;
+                    changes.push(`Converted ${converted} prose line(s) to bullet points (Cline: "bullet points make individual requirements clear")`);
+                }
+            }
+            break;
+        }
+        case "gemini": {
+            // Fix invalid @ import paths (missing ./ prefix)
+            if (hasCodes("GEMINI_IMPORT_INVALID_PATH")) {
+                const { lines: fixed, fixed: count } = fixAtImportPaths(lines);
+                if (count > 0) {
+                    lines = fixed;
+                    changes.push(`Fixed ${count} @-import path(s) to use ./ prefix — required by Gemini CLI's import processor`);
+                }
+            }
+            break;
+        }
+        case "amp": {
+            // Fix bare @path → @./path to prevent Amp's implicit **/ recursive prepend
+            if (hasCodes("AMP_IMPORT_IMPLICIT_RECURSIVE")) {
+                const { lines: fixed, fixed: count } = fixAtImportPaths(lines);
+                if (count > 0) {
+                    lines = fixed;
+                    changes.push(`Fixed ${count} @-mention path(s) to use ./ prefix — prevents Amp from prepending **/ and matching files across the entire project`);
+                }
+            }
+            break;
+        }
+        case "copilot": {
+            // Add applyTo frontmatter stub to .github/instructions/ files missing it
+            if (hasCodes("COPILOT_INSTRUCTIONS_MISSING_APPLY_TO") && !content.trimStart().startsWith("---")) {
+                const stub = [
+                    "---",
+                    "applyTo: '[TODO: glob pattern, e.g. **/*.rb or src/**/*.ts]'",
+                    "---",
+                    "",
+                ];
+                lines = [...stub, ...lines];
+                changes.push("Added applyTo frontmatter stub — specify a glob pattern to scope this instruction file to matching paths");
+            }
+            break;
+        }
+    }
+    return { content: lines.join("\n"), changes };
 }
 function moveCriticalRulesToTop(lines, issues) {
     const hasAttentionIssue = issues.some((i) => i.code === "ATTENTION_PLACEMENT");
@@ -131,6 +306,13 @@ function moveCriticalRulesToTop(lines, issues) {
 export function optimize(config, analysis, scoreResult) {
     const changes = [];
     let content = config.content;
+    // Platform-specific structural fixes (frontmatter, import paths, prose format)
+    // Run first so subsequent passes work on already-corrected structure.
+    const { content: platformFixed, changes: platformChanges } = applyPlatformOptimizations(content, config, analysis.issues);
+    if (platformChanges.length > 0) {
+        content = platformFixed;
+        changes.push(...platformChanges);
+    }
     // Fix vague rules
     const { content: fixedVague, replacements } = fixVagueRules(content);
     if (replacements > 0) {
@@ -149,7 +331,7 @@ export function optimize(config, analysis, scoreResult) {
         content = reorderedLines.join("\n");
         changes.push("Moved critical rules (never/always/must) to the top of the file for better LLM attention");
     }
-    // Add missing section stubs
+    // Add missing section stubs (platform-aware content hints)
     const { content: withStubs, added } = addMissingSectionStubs(content, analysis.checks.missingSections.missing, config.platform);
     if (added.length > 0) {
         content = withStubs;

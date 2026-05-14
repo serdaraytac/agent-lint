@@ -174,12 +174,67 @@ export function analyzeStructure(config) {
         .filter((l) => l.trim() && !l.startsWith("#")).length;
     return { hasHeadings, headingCount, maxDepth, longParagraphLines, unorganizedRuleCount };
 }
-// Copilot: two documented limits from official GitHub docs.
-// - Code review reads only the first 4,000 characters.
-// - Quality "may deteriorate" beyond ~1,000 lines (documented soft limit).
-// Source: docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions-for-github-copilot
+// Copilot: repository-wide instructions at .github/copilot-instructions.md; path-specific rules at
+// .github/instructions/*.instructions.md with applyTo frontmatter. excludeAgent accepts only
+// "code-review" or "cloud-agent". Source: docs.github.com/en/copilot/customizing-copilot/
 function checkCopilotFormat(config) {
     const issues = [];
+    const normalized = config.filename.toLowerCase().replace(/\\/g, "/");
+    const basename = normalized.split("/").pop() ?? normalized;
+    const isPathSpecific = normalized.includes(".github/instructions/");
+    // Repository-wide instructions.md must live inside .github/ — files elsewhere are not recognized.
+    if (basename === "copilot-instructions.md" && !normalized.includes(".github/")) {
+        issues.push({
+            code: "COPILOT_WRONG_LOCATION",
+            severity: "critical",
+            message: "copilot-instructions.md must be placed inside the .github/ directory — GitHub Copilot does not recognize it at any other location (docs.github.com/en/copilot/customizing-copilot/adding-repository-custom-instructions-for-github-copilot)",
+        });
+        return issues;
+    }
+    // Path-specific instruction files must end in .instructions.md and require applyTo frontmatter.
+    if (isPathSpecific) {
+        if (!basename.endsWith(".instructions.md")) {
+            issues.push({
+                code: "COPILOT_INSTRUCTIONS_WRONG_EXTENSION",
+                severity: "warning",
+                message: "Files in .github/instructions/ must end with .instructions.md to be recognized by GitHub Copilot — rename this file accordingly",
+            });
+            return issues;
+        }
+        const hasFrontmatter = config.content.trimStart().startsWith("---");
+        if (!hasFrontmatter) {
+            issues.push({
+                code: "COPILOT_INSTRUCTIONS_MISSING_APPLY_TO",
+                severity: "warning",
+                message: "Path-specific instruction files in .github/instructions/ should have an 'applyTo:' frontmatter field to scope them to matching files (e.g. applyTo: '**/*.rb') — without it the file is applied repository-wide",
+            });
+        }
+        else {
+            const closeIdx = config.content.indexOf("---", 3);
+            const frontmatter = closeIdx > -1 ? config.content.slice(3, closeIdx) : "";
+            if (!frontmatter.includes("applyTo")) {
+                issues.push({
+                    code: "COPILOT_INSTRUCTIONS_MISSING_APPLY_TO",
+                    severity: "warning",
+                    message: "Frontmatter is present but missing 'applyTo:' — add a glob pattern (e.g. applyTo: '**/*.rb') to scope this instruction file to specific paths",
+                });
+            }
+            // excludeAgent only accepts "code-review" or "cloud-agent"
+            const excludeMatch = frontmatter.match(/excludeAgent:\s*["']?([^"'\n]+)["']?/);
+            if (excludeMatch) {
+                const val = excludeMatch[1].trim();
+                if (val !== "code-review" && val !== "cloud-agent") {
+                    issues.push({
+                        code: "COPILOT_INVALID_EXCLUDE_AGENT",
+                        severity: "warning",
+                        message: `excludeAgent: "${val}" is not a valid value — GitHub Copilot only accepts "code-review" or "cloud-agent"`,
+                    });
+                }
+            }
+        }
+        return issues;
+    }
+    // Repository-wide copilot-instructions.md size checks (existing documented limits).
     if (config.charCount > 4_000) {
         issues.push({
             code: "COPILOT_SIZE_LIMIT",
@@ -196,12 +251,34 @@ function checkCopilotFormat(config) {
     }
     return issues;
 }
-// Cursor: .cursor/rules/*.md files require YAML frontmatter (globs / alwaysApply) to control scope.
+// Cursor: .cursor/rules/*.md files require YAML frontmatter with valid keys.
+// Valid frontmatter keys: description, globs, alwaysApply — any others are silently ignored.
+// .cursorrules is the legacy format; the current system is .cursor/rules/*.md (or *.mdc).
+// Best practice: keep rules under 500 lines; split large rules into composable files.
+// Source: cursor.com/docs/context/rules
 function checkCursorFormat(config) {
     const issues = [];
     const normalized = config.filename.toLowerCase().replace(/\\/g, "/");
+    const basename = normalized.split("/").pop() ?? normalized;
+    // .cursorrules is the legacy format — current Cursor docs no longer mention it
+    if (basename === ".cursorrules") {
+        issues.push({
+            code: "CURSOR_CURSORRULES_LEGACY",
+            severity: "info",
+            message: ".cursorrules is the legacy Cursor rules format — migrate to .cursor/rules/*.md (or *.mdc) files with YAML frontmatter for full scope control; the old format is no longer documented at cursor.com/docs/context/rules",
+        });
+        return issues;
+    }
     if (!normalized.includes(".cursor/rules/"))
         return issues;
+    // 500-line best practice (explicitly documented at cursor.com/docs/context/rules)
+    if (config.lines.length > 500) {
+        issues.push({
+            code: "CURSOR_RULE_TOO_LONG",
+            severity: "warning",
+            message: `Rule file has ${config.lines.length} lines — Cursor documentation recommends keeping rules under 500 lines; split into multiple composable rule files`,
+        });
+    }
     const hasFrontmatter = config.content.trimStart().startsWith("---");
     if (!hasFrontmatter) {
         issues.push({
@@ -213,17 +290,30 @@ function checkCursorFormat(config) {
     }
     const closeIdx = config.content.indexOf("---", 3);
     const frontmatter = closeIdx > -1 ? config.content.slice(3, closeIdx) : "";
-    if (!frontmatter.includes("globs") && !frontmatter.includes("alwaysApply")) {
+    // Detect unknown frontmatter keys — only description, globs, alwaysApply are valid
+    const VALID_CURSOR_KEYS = ["description", "globs", "alwaysApply"];
+    const keyMatches = frontmatter.matchAll(/^(\w[\w-]*):/gm);
+    for (const match of keyMatches) {
+        const key = match[1];
+        if (!VALID_CURSOR_KEYS.includes(key)) {
+            issues.push({
+                code: "CURSOR_UNKNOWN_FRONTMATTER_KEY",
+                severity: "info",
+                message: `Unknown frontmatter key '${key}' — Cursor only recognizes 'description', 'globs', and 'alwaysApply'; unknown keys are silently ignored`,
+            });
+        }
+    }
+    if (!frontmatter.includes("globs") && !frontmatter.includes("alwaysApply") && !frontmatter.includes("description")) {
         issues.push({
             code: "CURSOR_FRONTMATTER_INCOMPLETE",
             severity: "info",
-            message: "Cursor rule frontmatter is present but missing scope — add 'globs: [\"**/*.ts\"]' or 'alwaysApply: true'",
+            message: "Cursor rule frontmatter is present but missing scope — add 'globs: [\"**/*.ts\"]' or 'alwaysApply: true'; without these the rule requires manual @-mention to activate",
         });
     }
     return issues;
 }
 // Shared: detect build/test commands that appear outside fenced code blocks.
-const COMMAND_PATTERN = /\b(npm run|yarn run|npx |pnpm run|make |cargo run|go run|python |pytest|jest|vitest)\b/;
+const COMMAND_PATTERN = /\b(npm run|npm test|npm start|yarn run|yarn test|npx |pnpm run|pnpm test|make |cargo run|go run|python |pytest|jest|vitest)\b/;
 function findCommandOutsideBlock(config, code, severity, message) {
     let inCodeBlock = false;
     for (let i = 0; i < config.lines.length; i++) {
@@ -238,15 +328,121 @@ function findCommandOutsideBlock(config, code, severity, message) {
     }
     return [];
 }
-// Claude Code: build/test commands should live inside fenced code blocks so Claude Code can parse them.
+// Claude Code: CLAUDE.md is injected into every context window — completeness and token efficiency both matter.
+// Commands must live in fenced code blocks so Claude Code can parse and run them without reading package.json.
+// Supports @-import syntax (@./path.md) to split large files; imports inside code blocks are not resolved.
+// Unfilled [TODO:] placeholders left in production configs are worse than omission — the model cannot act on them.
+// Source: docs.anthropic.com/en/docs/claude-code/memory
 function checkClaudeFormat(config) {
-    return findCommandOutsideBlock(config, "CLAUDE_COMMANDS_NOT_IN_BLOCK", "info", "Claude Code reads build/test commands from fenced code blocks — wrap them in ``` for reliable parsing");
+    const issues = [];
+    // Commands outside code blocks
+    const commandIssues = findCommandOutsideBlock(config, "CLAUDE_COMMANDS_NOT_IN_BLOCK", "info", "Claude Code reads build/test commands from fenced code blocks — wrap them in ``` for reliable parsing");
+    issues.push(...commandIssues);
+    // No build/test commands anywhere — highest single-value addition to any CLAUDE.md
+    if (commandIssues.length === 0 && !COMMAND_PATTERN.test(config.content)) {
+        issues.push({
+            code: "CLAUDE_MISSING_BUILD_COMMANDS",
+            severity: "warning",
+            message: "No build, test, or lint commands found — add a fenced code block with runnable commands (e.g. npm test, npm run build) so Claude Code can execute them without reading package.json on every request",
+        });
+    }
+    // Unfilled [TODO:] placeholders — incomplete directives the model cannot act on
+    const todoCount = (config.content.match(/\[TODO:/g) ?? []).length;
+    if (todoCount > 0) {
+        issues.push({
+            code: "CLAUDE_PLACEHOLDER_FOUND",
+            severity: "warning",
+            message: `${todoCount} unfilled [TODO:] placeholder(s) — the model cannot act on incomplete directives; fill them in or remove them`,
+        });
+    }
+    // @-imports inside fenced code blocks are treated as literal text, not resolved
+    let insideBlock = false;
+    const blockedImports = [];
+    for (let i = 0; i < config.lines.length; i++) {
+        const line = config.lines[i];
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            continue;
+        }
+        if (insideBlock && /@(?:\.\/|\.\.\/|\/)/.test(line)) {
+            blockedImports.push(i + 1);
+        }
+    }
+    if (blockedImports.length > 0) {
+        issues.push({
+            code: "CLAUDE_IMPORT_IN_CODE_BLOCK",
+            severity: "info",
+            message: `@-import on line${blockedImports.length > 1 ? "s" : ""} ${blockedImports.join(", ")} is inside a fenced code block — Claude Code does not resolve @-imports within code blocks; move outside to activate`,
+        });
+    }
+    // Large file with no @-imports — splitting into subdirectory CLAUDE.md files reduces per-context cost
+    if (config.charCount > 10_000 && !/@(?:\.\/|\.\.\/|\/)/.test(config.content)) {
+        issues.push({
+            code: "CLAUDE_SUBDIR_SPLIT_RECOMMENDED",
+            severity: "info",
+            message: `File is ${config.charCount} characters — Claude Code loads CLAUDE.md from every directory it navigates to; split into subdirectory CLAUDE.md files to reduce per-context token cost and keep rules close to the code they govern`,
+        });
+    }
+    return issues;
 }
-// Cline: official docs recommend bullet points and headers ("Bullet points make individual requirements clear").
-// No hard size limit is documented — token efficiency is handled by the general scorer.
+// Cline: .clinerules/ directory supports YAML frontmatter with 'paths:' for glob scoping.
+// Critical distinction: Cline uses 'paths:' (not 'globs:' — that is Cursor's key, silently ignored by Cline).
+// Empty paths: [] means the rule never activates. Only .md and .txt files are processed.
+// No @-import syntax — composition is done via the .clinerules/ directory itself (merge all files).
 // Source: docs.cline.bot/customization/cline-rules
 function checkClineFormat(config) {
     const issues = [];
+    const normalized = config.filename.toLowerCase().replace(/\\/g, "/");
+    const isInRulesDir = normalized.includes(".clinerules/");
+    if (isInRulesDir) {
+        const ext = normalized.split(".").pop() ?? "";
+        if (ext !== "md" && ext !== "txt") {
+            issues.push({
+                code: "CLINE_UNSUPPORTED_EXTENSION",
+                severity: "warning",
+                message: `File has .${ext} extension — Cline only processes .md and .txt files from the .clinerules/ directory; this file will be silently ignored`,
+            });
+            return issues;
+        }
+        if (config.content.trimStart().startsWith("---")) {
+            const closeIdx = config.content.indexOf("---", 3);
+            const frontmatter = closeIdx > -1 ? config.content.slice(3, closeIdx) : "";
+            // 'globs:' is Cursor's key — silently ignored by Cline, rule activates unconditionally
+            if (frontmatter.includes("globs:") && !frontmatter.includes("paths:")) {
+                issues.push({
+                    code: "CLINE_WRONG_FRONTMATTER_KEY",
+                    severity: "warning",
+                    message: "Frontmatter uses 'globs:' which is Cursor's key — Cline uses 'paths:' for glob scoping; 'globs:' is silently ignored and the rule will activate on every request",
+                });
+            }
+            // Empty paths list means the rule never fires
+            if (/paths:\s*\[\s*\]/.test(frontmatter) || /paths:\s*\n\s*\n/.test(frontmatter)) {
+                issues.push({
+                    code: "CLINE_EMPTY_PATHS",
+                    severity: "warning",
+                    message: "Frontmatter has an empty 'paths:' list — this rule will never activate; add glob patterns (e.g. 'src/**/*.ts') or remove the paths key to make it always active",
+                });
+            }
+        }
+    }
+    // @ import syntax is not supported in Cline — unlike Gemini CLI or Amp
+    let insideBlock = false;
+    for (let i = 0; i < config.lines.length; i++) {
+        const line = config.lines[i];
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            continue;
+        }
+        if (!insideBlock && /@[./~]/.test(line)) {
+            issues.push({
+                code: "CLINE_AT_IMPORT_NOT_SUPPORTED",
+                severity: "warning",
+                message: `Line ${i + 1}: @-import syntax is not supported in Cline — split content into separate files under .clinerules/ directory instead; all .md and .txt files there are merged automatically`,
+                line: i + 1,
+            });
+            break;
+        }
+    }
     const bulletLines = config.lines.filter((l) => /^\s*[-*]\s/.test(l)).length;
     const contentLines = config.lines.filter((l) => l.trim() && !l.startsWith("#")).length;
     if (contentLines > 5 && bulletLines === 0) {
@@ -258,15 +454,27 @@ function checkClineFormat(config) {
     }
     return issues;
 }
-// Codex (AGENTS.md): documented hard limit is 32 KiB (32,768 bytes) per project_doc_max_bytes config.
-// Source: developers.openai.com/codex/guides/agents-md
+// Codex (AGENTS.md): 32 KiB limit confirmed in source (codex-rs/config/src/config_toml.rs line 67).
+// AGENTS.override.md at the same directory level takes precedence over AGENTS.md.
+// Codex reads hierarchically from Git root down; files concatenate root-first, closer files override.
+// Source: developers.openai.com/codex/guides/agents-md + github.com/openai/codex source
 function checkCodexFormat(config) {
     const issues = [];
     if (config.charCount > 32_768) {
         issues.push({
             code: "CODEX_SIZE_LIMIT",
             severity: "warning",
-            message: `File is ${config.charCount} characters — Codex enforces a default 32 KiB (32,768 byte) limit on AGENTS.md via project_doc_max_bytes; content beyond this limit is silently truncated`,
+            message: `File is ${config.charCount} characters — Codex enforces a default 32 KiB (32,768 byte) limit on AGENTS.md via project_doc_max_bytes; content beyond this limit is silently truncated (configurable via ~/.codex/config.toml)`,
+        });
+    }
+    // AGENTS.override.md takes precedence at the same directory level — surface this only when the file
+    // is large enough that splitting or overriding becomes relevant (>50% of the 32 KiB limit).
+    const basename = config.filename.toLowerCase().split("/").pop() ?? "";
+    if (basename === "agents.md" && config.charCount > 16_384) {
+        issues.push({
+            code: "CODEX_OVERRIDE_FILE_AVAILABLE",
+            severity: "info",
+            message: "Codex checks for AGENTS.override.md at the same directory level before AGENTS.md — use AGENTS.override.md when you need this directory's rules to take precedence without modifying the shared AGENTS.md",
         });
     }
     return issues;
@@ -284,8 +492,100 @@ function checkWindsurfFormat(config) {
     }
     return issues;
 }
-// Amp: official config file is AGENTS.md (also AGENT.md and CLAUDE.md).
-// .amp/instructions.md has no basis in official Amp documentation (ampcode.com/manual).
+// Gemini CLI: supports @-import syntax (@./path.md, @../path, @/abs, @~/home) for splitting large files.
+// Imports inside fenced code blocks are silently ignored. Max import depth: 5 levels.
+// Source: geminicli.com/docs/reference/memport (Memory Import Processor)
+function checkGeminiFormat(config) {
+    const issues = [];
+    let insideBlock = false;
+    const activeImports = [];
+    const skippedImports = [];
+    for (let i = 0; i < config.lines.length; i++) {
+        const line = config.lines[i];
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            continue;
+        }
+        const match = line.match(/@([^\s]+)/);
+        if (!match)
+            continue;
+        if (insideBlock) {
+            skippedImports.push(i + 1);
+        }
+        else {
+            const path = match[1];
+            if (path.startsWith("./") || path.startsWith("../") || path.startsWith("/") || path.startsWith("~/")) {
+                activeImports.push(i + 1);
+            }
+            else {
+                issues.push({
+                    code: "GEMINI_IMPORT_INVALID_PATH",
+                    severity: "warning",
+                    message: `Line ${i + 1}: @${path} — Gemini CLI requires a path prefix: @./relative, @../parent, @/absolute, or @~/home-relative; bare @word is not a valid import`,
+                    line: i + 1,
+                });
+            }
+        }
+    }
+    // @ imports inside code blocks are silently ignored by Gemini CLI
+    if (skippedImports.length > 0) {
+        issues.push({
+            code: "GEMINI_IMPORT_IN_CODE_BLOCK",
+            severity: "info",
+            message: `@-import on line${skippedImports.length > 1 ? "s" : ""} ${skippedImports.join(", ")} is inside a fenced code block — Gemini CLI ignores @-imports within code blocks; move outside to activate`,
+        });
+    }
+    // Large file with no active imports — suggest splitting
+    if (config.charCount > 10_000 && activeImports.length === 0) {
+        issues.push({
+            code: "GEMINI_LARGE_NO_IMPORTS",
+            severity: "info",
+            message: `File is ${config.charCount} characters — Gemini CLI supports @./path.md import syntax to split content across multiple files; imports resolve recursively up to 5 levels deep (geminicli.com/docs/reference/memport)`,
+        });
+    }
+    return issues;
+}
+// OpenCode: AGENTS.md at project root is the primary config file.
+// CLAUDE.md is accepted as a legacy fallback but AGENTS.md is preferred for clarity.
+// No @-import syntax inside AGENTS.md — file composition is handled via opencode.json "instructions" field.
+// Source: opencode.ai/docs/rules
+function checkOpenCodeFormat(config) {
+    const issues = [];
+    const lower = config.filename.toLowerCase();
+    const basename = lower.split("/").pop() ?? lower;
+    // CLAUDE.md works as fallback but signals Claude Code intent, not OpenCode
+    if (basename === "claude.md") {
+        issues.push({
+            code: "OPENCODE_PREFERS_AGENTS_MD",
+            severity: "info",
+            message: "OpenCode reads CLAUDE.md as a legacy fallback — rename to AGENTS.md at the project root to make OpenCode intent explicit (opencode.ai/docs/rules)",
+        });
+    }
+    // @ import syntax is not supported within AGENTS.md for OpenCode
+    // File composition is done via the "instructions" field in opencode.json
+    let insideBlock = false;
+    for (let i = 0; i < config.lines.length; i++) {
+        const line = config.lines[i];
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            continue;
+        }
+        if (!insideBlock && /@[./~]/.test(line)) {
+            issues.push({
+                code: "OPENCODE_AT_IMPORT_NOT_SUPPORTED",
+                severity: "warning",
+                message: `Line ${i + 1}: @-import syntax is not supported within AGENTS.md for OpenCode — use the "instructions" field in opencode.json to compose multiple files or reference remote URLs (5-second fetch timeout applies)`,
+                line: i + 1,
+            });
+            break;
+        }
+    }
+    return issues;
+}
+// Amp: AGENTS.md with @-mention syntax for including other files.
+// Paths not starting with ./ or ../ get **/ prepended implicitly (recursive project-wide match).
+// @-mentions inside fenced code blocks are silently ignored.
+// Source: ampcode.com/manual
 function checkAmpFormat(config) {
     const issues = [];
     if (config.filename.toLowerCase().includes(".amp/instructions")) {
@@ -293,6 +593,47 @@ function checkAmpFormat(config) {
             code: "AMP_INCORRECT_FILENAME",
             severity: "info",
             message: "Amp's official config file is AGENTS.md (also AGENT.md or CLAUDE.md) placed at the project root — .amp/instructions.md is not recognized by Amp per official documentation (ampcode.com/manual)",
+        });
+    }
+    let insideBlock = false;
+    const implicitRecursive = [];
+    const ignoredInBlock = [];
+    for (let i = 0; i < config.lines.length; i++) {
+        const line = config.lines[i];
+        if (line.trimStart().startsWith("```")) {
+            insideBlock = !insideBlock;
+            continue;
+        }
+        const match = line.match(/@([^\s,]+)/);
+        if (!match)
+            continue;
+        if (insideBlock) {
+            ignoredInBlock.push(i + 1);
+            continue;
+        }
+        const path = match[1];
+        // Paths without ./ or ../ prefix get **/ prepended — may match more files than intended
+        if (!path.startsWith("./") && !path.startsWith("../") && !path.startsWith("/") && !path.startsWith("~/") && !path.startsWith("*")) {
+            implicitRecursive.push(i + 1);
+        }
+    }
+    if (ignoredInBlock.length > 0) {
+        issues.push({
+            code: "AMP_IMPORT_IN_CODE_BLOCK",
+            severity: "info",
+            message: `@-mention on line${ignoredInBlock.length > 1 ? "s" : ""} ${ignoredInBlock.join(", ")} is inside a fenced code block — Amp ignores @-mentions within code blocks; move outside to activate`,
+        });
+    }
+    for (const lineNum of implicitRecursive) {
+        const line = config.lines[lineNum - 1];
+        const match = line.match(/@([^\s,]+)/);
+        if (!match)
+            continue;
+        issues.push({
+            code: "AMP_IMPORT_IMPLICIT_RECURSIVE",
+            severity: "info",
+            message: `Line ${lineNum}: @${match[1]} — Amp implicitly prepends **/ to paths not starting with ./ or ../; this matches recursively across the entire project; use @./${match[1]} to pin to the current directory`,
+            line: lineNum,
         });
     }
     return issues;
@@ -353,6 +694,12 @@ export function analyzeFormatCompliance(config) {
         case "windsurf":
             issues = checkWindsurfFormat(config);
             break;
+        case "gemini":
+            issues = checkGeminiFormat(config);
+            break;
+        case "opencode":
+            issues = checkOpenCodeFormat(config);
+            break;
         case "amp":
             issues = checkAmpFormat(config);
             break;
@@ -362,7 +709,6 @@ export function analyzeFormatCompliance(config) {
         case "firebender":
             issues = checkFirebenderFormat(config);
             break;
-        // gemini: no official format requirements documented
     }
     return { issues };
 }
