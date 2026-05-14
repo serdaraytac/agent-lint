@@ -23,16 +23,18 @@ const ROOT_CONFIG_FILES = new Set([
   "cline.md",
   "codex.md",
   "agents.md",
+  "agent.md",
   "gemini.md",
   "copilot-instructions.md",
   ".windsurfrules",
   "windsurf.md",
   "opencode.md",
   "kimi.md",
+  "warp.md",
   "firebender.xml",
 ]);
 
-// Subdirectory config files: [subdir, filename] pairs.
+// Subdirectory config files: [subdir, filename] pairs — single known filename per dir.
 const SUBDIR_CONFIG_FILES: Array<[string, string]> = [
   [".github",      "copilot-instructions.md"],
   [".gemini",      "GEMINI.md"],
@@ -41,8 +43,16 @@ const SUBDIR_CONFIG_FILES: Array<[string, string]> = [
   [".warp",        "instructions.md"],
 ];
 
+// Wildcard directories — every file inside is a potential config; platform detected per file.
+// Supports .cursor/rules/*.md, .clinerules/*.md|txt, .github/instructions/*.instructions.md
+const WILDCARD_DIRS = [
+  ".cursor/rules",
+  ".clinerules",
+  ".github/instructions",
+];
+
 const server = new Server(
-  { name: "agent-lint", version: "1.0.0" },
+  { name: "agent-lint", version: "1.0.3" },
   { capabilities: { tools: {} } }
 );
 
@@ -84,7 +94,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           filename: {
             type: "string",
-            description: "Config filename when passing content inline (e.g. CLAUDE.md, .cursorrules)",
+            description: "Config filename when passing content inline (e.g. .cursorrules, AGENTS.md, .clinerules, GEMINI.md)",
           },
           content: {
             type: "string",
@@ -126,7 +136,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "scan_project",
       description:
         "Scan a project directory and return all recognized AI coding agent config files found, " +
-        "including files in subdirectories (.github, .gemini, .amp, .antigravity, .warp).",
+        "including files in subdirectories (.cursor/rules, .clinerules, .github/instructions, .github, .gemini, .amp, .antigravity, .warp).",
       inputSchema: {
         type: "object",
         properties: {
@@ -169,7 +179,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
-      // Subdirectory files
+      // Subdirectory files — single known filename per directory
       for (const [subdir, filename] of SUBDIR_CONFIG_FILES) {
         const subdirPath = resolve(dir, subdir);
         try {
@@ -177,12 +187,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           for (const entry of subdirEntries) {
             if (entry.isFile() && entry.name.toLowerCase() === filename.toLowerCase()) {
               const filepath = resolve(subdirPath, entry.name);
-              const cfg = parseConfig(entry.name, "");
-              found.push({ filepath, filename: `${subdir}/${entry.name}`, platform: cfg.platform });
+              const relname = `${subdir}/${entry.name}`;
+              const cfg = parseConfig(relname, "");
+              found.push({ filepath, filename: relname, platform: cfg.platform });
             }
           }
         } catch {
           // Subdirectory doesn't exist — skip silently
+        }
+      }
+
+      // Wildcard directories — every file is a potential config (Cursor rules, Cline rules, Copilot instructions)
+      for (const wildcardDir of WILDCARD_DIRS) {
+        const wildcardPath = resolve(dir, wildcardDir);
+        try {
+          const wildcardEntries = await readdir(wildcardPath, { withFileTypes: true });
+          for (const entry of wildcardEntries) {
+            if (!entry.isFile()) continue;
+            const relname = `${wildcardDir}/${entry.name}`;
+            const cfg = parseConfig(relname, "");
+            if (cfg.platform !== "unknown") {
+              const filepath = resolve(wildcardPath, entry.name);
+              found.push({ filepath, filename: relname, platform: cfg.platform });
+            }
+          }
+        } catch {
+          // Directory doesn't exist — skip silently
         }
       }
 

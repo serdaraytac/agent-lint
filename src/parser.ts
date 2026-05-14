@@ -62,6 +62,12 @@ export function detectPlatform(filename: string): Platform {
   // .cursor/rules/*.md files are Cursor rule files regardless of their basename
   if (normalized.includes(".cursor/rules/")) return "cursor";
 
+  // .clinerules/ directory files are Cline rule files regardless of their basename
+  if (normalized.includes(".clinerules/")) return "cline";
+
+  // .github/instructions/*.instructions.md are path-specific Copilot instruction files
+  if (normalized.includes(".github/instructions/")) return "copilot";
+
   for (const [pattern, platform] of Object.entries(FILENAME_PLATFORM_MAP)) {
     if (normalized.endsWith(pattern.toLowerCase()) || basename === pattern.toLowerCase()) {
       return platform;

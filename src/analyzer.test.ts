@@ -247,33 +247,99 @@ describe("analyzeFormatCompliance", () => {
   describe("copilot", () => {
     it("flags files over 4,000 characters (code review hard limit)", () => {
       const content = "# Instructions\n" + "Use TypeScript.\n".repeat(250);
-      const config = parseConfig("copilot-instructions.md", content);
+      const config = parseConfig(".github/copilot-instructions.md", content);
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "COPILOT_SIZE_LIMIT")).toBe(true);
     });
 
     it("does not flag files under 4,000 characters", () => {
-      const config = parseConfig("copilot-instructions.md", "# Instructions\nUse TypeScript.");
+      const config = parseConfig(".github/copilot-instructions.md", "# Instructions\nUse TypeScript.");
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "COPILOT_SIZE_LIMIT")).toBe(false);
     });
 
     it("flags files over 1,000 lines (documented soft limit)", () => {
       const content = "Use TypeScript.\n".repeat(1_010);
-      const config = parseConfig("copilot-instructions.md", content);
+      const config = parseConfig(".github/copilot-instructions.md", content);
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "COPILOT_LINE_LIMIT")).toBe(true);
     });
 
     it("does not flag files under 1,000 lines", () => {
-      const config = parseConfig("copilot-instructions.md", "# Instructions\nUse TypeScript.");
+      const config = parseConfig(".github/copilot-instructions.md", "# Instructions\nUse TypeScript.");
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "COPILOT_LINE_LIMIT")).toBe(false);
+    });
+
+    it("flags copilot-instructions.md outside .github/ directory", () => {
+      const config = parseConfig("copilot-instructions.md", "# Instructions\nUse TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_WRONG_LOCATION")).toBe(true);
+    });
+
+    it("COPILOT_WRONG_LOCATION is critical severity", () => {
+      const config = parseConfig("copilot-instructions.md", "# Instructions\nUse TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      const issue = result.issues.find((i) => i.code === "COPILOT_WRONG_LOCATION");
+      expect(issue?.severity).toBe("critical");
+    });
+
+    it("does not flag copilot-instructions.md inside .github/", () => {
+      const config = parseConfig(".github/copilot-instructions.md", "# Instructions\nUse TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_WRONG_LOCATION")).toBe(false);
+    });
+
+    it("flags path-specific instruction file without applyTo frontmatter", () => {
+      const content = "# Ruby Rules\n- Always freeze strings.";
+      const config = parseConfig(".github/instructions/ruby.instructions.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_INSTRUCTIONS_MISSING_APPLY_TO")).toBe(true);
+    });
+
+    it("accepts path-specific instruction file with applyTo frontmatter", () => {
+      const content = "---\napplyTo: '**/*.rb'\n---\n# Ruby Rules\n- Always freeze strings.";
+      const config = parseConfig(".github/instructions/ruby.instructions.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_INSTRUCTIONS_MISSING_APPLY_TO")).toBe(false);
+    });
+
+    it("flags path-specific file with wrong extension in .github/instructions/", () => {
+      const config = parseConfig(".github/instructions/ruby.md", "# Ruby Rules\n- Freeze strings.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_INSTRUCTIONS_WRONG_EXTENSION")).toBe(true);
+    });
+
+    it("flags invalid excludeAgent value", () => {
+      const content = "---\napplyTo: '**/*.rb'\nexcludeAgent: 'chat'\n---\n# Ruby Rules";
+      const config = parseConfig(".github/instructions/ruby.instructions.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_INVALID_EXCLUDE_AGENT")).toBe(true);
+    });
+
+    it("accepts valid excludeAgent values", () => {
+      const content = "---\napplyTo: '**/*.rb'\nexcludeAgent: 'code-review'\n---\n# Ruby Rules";
+      const config = parseConfig(".github/instructions/ruby.instructions.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "COPILOT_INVALID_EXCLUDE_AGENT")).toBe(false);
     });
   });
 
   describe("cursor", () => {
-    it("ignores .cursorrules (not a .cursor/rules/ file)", () => {
+    it("flags .cursorrules as legacy format", () => {
+      const config = parseConfig(".cursorrules", "# Rules\nAlways use TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CURSOR_CURSORRULES_LEGACY")).toBe(true);
+    });
+
+    it("CURSOR_CURSORRULES_LEGACY is info severity", () => {
+      const config = parseConfig(".cursorrules", "# Rules\nAlways use TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      const issue = result.issues.find((i) => i.code === "CURSOR_CURSORRULES_LEGACY");
+      expect(issue?.severity).toBe("info");
+    });
+
+    it("does not flag CURSOR_MISSING_FRONTMATTER for .cursorrules (legacy path exits early)", () => {
       const config = parseConfig(".cursorrules", "# Rules\nAlways use TypeScript.");
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "CURSOR_MISSING_FRONTMATTER")).toBe(false);
@@ -285,11 +351,32 @@ describe("analyzeFormatCompliance", () => {
       expect(result.issues.some((i) => i.code === "CURSOR_MISSING_FRONTMATTER")).toBe(true);
     });
 
-    it("flags .cursor/rules/ file with frontmatter but missing globs/alwaysApply", () => {
-      const content = "---\ndescription: TypeScript rules\n---\n# Rules\nAlways use strict mode.";
+    it("flags .cursor/rules/ file with frontmatter but missing globs/alwaysApply/description", () => {
+      const content = "---\nunknownKey: value\n---\n# Rules\nAlways use strict mode.";
       const config = parseConfig(".cursor/rules/typescript.md", content);
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "CURSOR_FRONTMATTER_INCOMPLETE")).toBe(true);
+    });
+
+    it("flags rule file over 500 lines (documented best practice)", () => {
+      const content = "---\nalwaysApply: true\n---\n" + "- Rule.\n".repeat(510);
+      const config = parseConfig(".cursor/rules/typescript.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CURSOR_RULE_TOO_LONG")).toBe(true);
+    });
+
+    it("does not flag rule file under 500 lines", () => {
+      const content = "---\nalwaysApply: true\n---\n# Rules\nAlways use strict mode.";
+      const config = parseConfig(".cursor/rules/typescript.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CURSOR_RULE_TOO_LONG")).toBe(false);
+    });
+
+    it("flags unknown frontmatter key", () => {
+      const content = "---\nalwaysApply: true\ncustomKey: value\n---\n# Rules\nAlways use strict mode.";
+      const config = parseConfig(".cursor/rules/typescript.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CURSOR_UNKNOWN_FRONTMATTER_KEY")).toBe(true);
     });
 
     it("accepts .cursor/rules/ file with globs frontmatter", () => {
@@ -330,14 +417,130 @@ describe("analyzeFormatCompliance", () => {
       const result = analyzeFormatCompliance(config);
       expect(Array.isArray(result.issues)).toBe(true);
     });
+
+    it("flags missing build commands when no command patterns found anywhere", () => {
+      const content = "# Rules\n- Always use TypeScript.\n- Never commit secrets.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_MISSING_BUILD_COMMANDS")).toBe(true);
+    });
+
+    it("does not flag missing build commands when commands are in fenced block", () => {
+      const content = "# Commands\n```bash\nnpm test\nnpm run build\n```\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_MISSING_BUILD_COMMANDS")).toBe(false);
+    });
+
+    it("does not flag missing build commands when CLAUDE_COMMANDS_NOT_IN_BLOCK fires", () => {
+      // Commands outside blocks: COMMANDS_NOT_IN_BLOCK fires, MISSING_BUILD_COMMANDS must not
+      const content = "# Commands\nnpm run build\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_MISSING_BUILD_COMMANDS")).toBe(false);
+    });
+
+    it("flags unfilled [TODO:] placeholders", () => {
+      const content = "# Rules\n- [TODO: define coding style]\n- [TODO: add test requirements]\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      const issue = result.issues.find((i) => i.code === "CLAUDE_PLACEHOLDER_FOUND");
+      expect(issue).toBeDefined();
+      expect(issue?.message).toContain("2");
+    });
+
+    it("does not flag [TODO:] when none present", () => {
+      const content = "# Rules\n- Always use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_PLACEHOLDER_FOUND")).toBe(false);
+    });
+
+    it("flags @-imports inside fenced code blocks", () => {
+      const content = "# Rules\n```bash\n@./config.md\n```\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_IMPORT_IN_CODE_BLOCK")).toBe(true);
+    });
+
+    it("does not flag @-imports outside fenced code blocks", () => {
+      const content = "# Rules\n@./config.md\n- Always use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_IMPORT_IN_CODE_BLOCK")).toBe(false);
+    });
+
+    it("recommends subdirectory split for large files without @-imports", () => {
+      const content = "# Rules\n" + "- Always use TypeScript strict mode.\n".repeat(400);
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_SUBDIR_SPLIT_RECOMMENDED")).toBe(true);
+    });
+
+    it("does not recommend split when file uses @-imports", () => {
+      const body = "- Always use TypeScript strict mode.\n".repeat(400);
+      const content = "# Rules\n@./conventions.md\n" + body;
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_SUBDIR_SPLIT_RECOMMENDED")).toBe(false);
+    });
+
+    it("does not recommend split for small files", () => {
+      const content = "# Rules\n- Always use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLAUDE_SUBDIR_SPLIT_RECOMMENDED")).toBe(false);
+    });
   });
 
   describe("gemini", () => {
-    it("returns no format compliance issues (no official format requirements)", () => {
-      const content = "# Rules\nAlways use TypeScript.\n# Context\nThis is a Node.js project.\n";
-      const config = parseConfig("gemini.md", content);
+    it("flags large file with no @ imports (splitting suggestion)", () => {
+      const content = "# Rules\n" + "- Always use TypeScript.\n".repeat(500);
+      const config = parseConfig("GEMINI.md", content);
       const result = analyzeFormatCompliance(config);
-      expect(result.issues).toHaveLength(0);
+      expect(result.issues.some((i) => i.code === "GEMINI_LARGE_NO_IMPORTS")).toBe(true);
+    });
+
+    it("does not flag small file with no @ imports", () => {
+      const content = "# Rules\n- Always use TypeScript.\n- Never commit secrets.";
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_LARGE_NO_IMPORTS")).toBe(false);
+    });
+
+    it("does not flag large file that already uses @ imports", () => {
+      const content = "@./rules/typescript.md\n" + "- Always use TypeScript.\n".repeat(500);
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_LARGE_NO_IMPORTS")).toBe(false);
+    });
+
+    it("flags @ import inside fenced code block (silently ignored by Gemini CLI)", () => {
+      const content = "# Example\n```\n@./rules.md\n```\n";
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_IMPORT_IN_CODE_BLOCK")).toBe(true);
+    });
+
+    it("does not flag @ import outside code block", () => {
+      const content = "# Rules\n@./rules/typescript.md\n";
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_IMPORT_IN_CODE_BLOCK")).toBe(false);
+    });
+
+    it("flags @ import with invalid path (no prefix)", () => {
+      const content = "# Rules\n@rules.md\n";
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_IMPORT_INVALID_PATH")).toBe(true);
+    });
+
+    it("accepts @ imports with valid path prefixes", () => {
+      const content = "See @./docs.md and @~/global.md and @/abs.md and @../parent.md.";
+      const config = parseConfig("GEMINI.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "GEMINI_IMPORT_INVALID_PATH")).toBe(false);
     });
   });
 
@@ -361,10 +564,88 @@ describe("analyzeFormatCompliance", () => {
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "CLINE_UNSTRUCTURED_RULES")).toBe(false);
     });
+
+    it("flags unsupported file extension in .clinerules/ directory", () => {
+      const config = parseConfig(".clinerules/styles.yaml", "rules:\n  - use TypeScript");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_UNSUPPORTED_EXTENSION")).toBe(true);
+    });
+
+    it("does not flag .md extension in .clinerules/ directory", () => {
+      const config = parseConfig(".clinerules/styles.md", "# Rules\n- Use TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_UNSUPPORTED_EXTENSION")).toBe(false);
+    });
+
+    it("flags 'globs:' frontmatter key (Cursor's key, silently ignored by Cline)", () => {
+      const content = "---\nglobs:\n  - '**/*.ts'\n---\n# Rules\n- Use TypeScript.";
+      const config = parseConfig(".clinerules/ts.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_WRONG_FRONTMATTER_KEY")).toBe(true);
+    });
+
+    it("accepts 'paths:' frontmatter key (Cline's correct key)", () => {
+      const content = "---\npaths:\n  - 'src/**/*.ts'\n---\n# Rules\n- Use TypeScript.";
+      const config = parseConfig(".clinerules/ts.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_WRONG_FRONTMATTER_KEY")).toBe(false);
+    });
+
+    it("flags empty paths list (rule never activates)", () => {
+      const content = "---\npaths: []\n---\n# Rules\n- Use TypeScript.";
+      const config = parseConfig(".clinerules/ts.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_EMPTY_PATHS")).toBe(true);
+    });
+
+    it("flags @-import syntax (not supported in Cline)", () => {
+      const content = "# Rules\n@./other-rules.md\n- Use TypeScript.";
+      const config = parseConfig(".clinerules", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_AT_IMPORT_NOT_SUPPORTED")).toBe(true);
+    });
+
+    it("does not flag @-import inside code block", () => {
+      const content = "# Example\n```\n@./other.md\n```\n- Use TypeScript.";
+      const config = parseConfig(".clinerules", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CLINE_AT_IMPORT_NOT_SUPPORTED")).toBe(false);
+    });
+  });
+
+  describe("opencode", () => {
+    it("flags CLAUDE.md filename (prefers AGENTS.md)", () => {
+      // Simulate a user who explicitly targets opencode but named the file CLAUDE.md (the accepted fallback).
+      // We spread to override filename while keeping platform = "opencode" from opencode.md detection.
+      const base = parseConfig("opencode.md", "# Rules\n- Use TypeScript.");
+      const config = { ...base, filename: "CLAUDE.md" };
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "OPENCODE_PREFERS_AGENTS_MD")).toBe(true);
+    });
+
+    it("does not flag opencode.md filename", () => {
+      const config = parseConfig("opencode.md", "# Rules\n- Use TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "OPENCODE_PREFERS_AGENTS_MD")).toBe(false);
+    });
+
+    it("flags @-import syntax (not supported within opencode.md)", () => {
+      const content = "# Rules\n@./extra-rules.md\n- Use TypeScript.";
+      const config = parseConfig("opencode.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "OPENCODE_AT_IMPORT_NOT_SUPPORTED")).toBe(true);
+    });
+
+    it("does not flag @-import inside code block", () => {
+      const content = "# Example\n```\n@./extra.md\n```\n- Use TypeScript.";
+      const config = parseConfig("opencode.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "OPENCODE_AT_IMPORT_NOT_SUPPORTED")).toBe(false);
+    });
   });
 
   describe("codex", () => {
-    it("flags files over 32 KiB (documented hard limit)", () => {
+    it("flags files over 32 KiB (confirmed in codex-rs source)", () => {
       const content = "# Conventions\n" + "Always use TypeScript.\n".repeat(1_500);
       const config = parseConfig("AGENTS.md", content);
       const result = analyzeFormatCompliance(config);
@@ -375,6 +656,27 @@ describe("analyzeFormatCompliance", () => {
       const config = parseConfig("AGENTS.md", "# Conventions\n- Always use TypeScript.");
       const result = analyzeFormatCompliance(config);
       expect(result.issues.some((i) => i.code === "CODEX_SIZE_LIMIT")).toBe(false);
+    });
+
+    it("informs about AGENTS.override.md precedence when file exceeds 50% of 32 KiB limit", () => {
+      const content = "# Conventions\n" + "- Always use TypeScript.\n".repeat(700); // >16KB
+      const config = parseConfig("AGENTS.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CODEX_OVERRIDE_FILE_AVAILABLE")).toBe(true);
+    });
+
+    it("does not show CODEX_OVERRIDE_FILE_AVAILABLE for small AGENTS.md files", () => {
+      const config = parseConfig("AGENTS.md", "# Conventions\n- Always use TypeScript.");
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "CODEX_OVERRIDE_FILE_AVAILABLE")).toBe(false);
+    });
+
+    it("CODEX_OVERRIDE_FILE_AVAILABLE is info severity", () => {
+      const content = "# Conventions\n" + "- Always use TypeScript.\n".repeat(700);
+      const config = parseConfig("AGENTS.md", content);
+      const result = analyzeFormatCompliance(config);
+      const issue = result.issues.find((i) => i.code === "CODEX_OVERRIDE_FILE_AVAILABLE");
+      expect(issue?.severity).toBe("info");
     });
   });
 
@@ -405,6 +707,42 @@ describe("analyzeFormatCompliance", () => {
       const result = analyzeFormatCompliance(config);
       const issue = result.issues.find((i) => i.code === "AMP_INCORRECT_FILENAME");
       expect(issue?.severity).toBe("info");
+    });
+
+    it("flags @ import inside fenced code block (silently ignored by Amp)", () => {
+      // amp-rules.md: basename contains "amp" → detected as platform "amp"
+      const content = "# Docs\n```\n@doc/style.md\n```\n- Use TypeScript.";
+      const config = parseConfig("amp-rules.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "AMP_IMPORT_IN_CODE_BLOCK")).toBe(true);
+    });
+
+    it("does not flag @ import outside code block", () => {
+      const content = "# Docs\nSee @./doc/style.md for conventions.\n- Use TypeScript.";
+      const config = parseConfig("amp-rules.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "AMP_IMPORT_IN_CODE_BLOCK")).toBe(false);
+    });
+
+    it("flags @ mention without ./ or ../ prefix (implicit **/ prepend by Amp)", () => {
+      const content = "# Docs\nSee @doc/style.md for conventions.\n";
+      const config = parseConfig("amp-rules.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "AMP_IMPORT_IMPLICIT_RECURSIVE")).toBe(true);
+    });
+
+    it("does not flag @ mention starting with ./", () => {
+      const content = "# Docs\nSee @./doc/style.md for conventions.\n";
+      const config = parseConfig("amp-rules.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "AMP_IMPORT_IMPLICIT_RECURSIVE")).toBe(false);
+    });
+
+    it("does not flag @ mention starting with ../", () => {
+      const content = "# Docs\nSee @../shared/style.md for conventions.\n";
+      const config = parseConfig("amp-rules.md", content);
+      const result = analyzeFormatCompliance(config);
+      expect(result.issues.some((i) => i.code === "AMP_IMPORT_IMPLICIT_RECURSIVE")).toBe(false);
     });
   });
 

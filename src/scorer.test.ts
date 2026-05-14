@@ -89,4 +89,38 @@ describe("score", () => {
     const sum = Object.values(result.categories).reduce((a, b) => a + b, 0);
     expect(result.overall).toBe(sum);
   });
+
+  it("penalizes Codex file exceeding 32 KiB hard truncation limit", () => {
+    const over32KB = "# Conventions\n" + "- Always use TypeScript.\n".repeat(1_500);
+    const under32KB = "# Conventions\n- Always use TypeScript.\n";
+    const overScore = score(analyze(parseConfig("AGENTS.md", over32KB)));
+    const underScore = score(analyze(parseConfig("AGENTS.md", under32KB)));
+    expect(overScore.categories.tokenEfficiency).toBeLessThan(underScore.categories.tokenEfficiency);
+  });
+
+  it("does not apply Codex hard-limit penalty to other platforms", () => {
+    // Same-size large file on Claude should not get the extra Codex penalty
+    const largeContent = "# Rules\n" + "- Always use TypeScript.\n".repeat(1_500);
+    const codexScore = score(analyze(parseConfig("AGENTS.md", largeContent)));
+    const claudeScore = score(analyze(parseConfig("CLAUDE.md", largeContent)));
+    // Codex should score lower on tokenEfficiency (hard limit penalty on top of verbosity)
+    expect(codexScore.categories.tokenEfficiency).toBeLessThanOrEqual(claudeScore.categories.tokenEfficiency);
+  });
+
+  it("penalizes Claude coverage when build commands are missing", () => {
+    const withCommands = "# Project\n\n## Commands\n```bash\nnpm test\nnpm run build\n```\n\n## Rules\n- Always use TypeScript.\n";
+    const withoutCommands = "# Project\n\n## Rules\n- Always use TypeScript.\n- Never commit secrets.\n";
+    const withScore = score(analyze(parseConfig("CLAUDE.md", withCommands)));
+    const withoutScore = score(analyze(parseConfig("CLAUDE.md", withoutCommands)));
+    expect(withScore.categories.coverage).toBeGreaterThan(withoutScore.categories.coverage);
+  });
+
+  it("does not apply Claude build commands penalty to other platforms", () => {
+    // A Cline config with no build commands should not lose the Claude-specific coverage points
+    const noCommands = "# Rules\n- Always use TypeScript.\n- Never commit secrets.\n";
+    const claudeScore = score(analyze(parseConfig("CLAUDE.md", noCommands)));
+    const clineScore  = score(analyze(parseConfig(".clinerules", noCommands)));
+    // Claude loses the extra coverage penalty; cline does not
+    expect(claudeScore.categories.coverage).toBeLessThanOrEqual(clineScore.categories.coverage);
+  });
 });

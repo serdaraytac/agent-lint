@@ -39,7 +39,7 @@ const PROFILES: Record<Platform, PlatformProfile> = {
     contextWindowTokens: 200_000,
     costPerMillion: 3.0,
     subscriptionBased: false,
-    expectedSections: ["rules", "context"],
+    expectedSections: ["rules", "context", "style"],
     vaguenessSensitivity: 1.0,
   },
   codex: {
@@ -86,7 +86,8 @@ const PROFILES: Record<Platform, PlatformProfile> = {
     contextWindowTokens: 1_000_000,
     costPerMillion: 5.0,
     subscriptionBased: false,
-    expectedSections: ["conventions", "testing"],
+    // Source: ampcode.com/manual — recommended content: architecture, build/test, conventions, review procedures
+    expectedSections: ["conventions", "testing", "architecture"],
     vaguenessSensitivity: 1.0,
   },
   opencode: {
@@ -95,7 +96,8 @@ const PROFILES: Record<Platform, PlatformProfile> = {
     contextWindowTokens: 131_072,
     costPerMillion: 3.0,
     subscriptionBased: false,
-    expectedSections: ["rules"],
+    // Source: opencode.ai/docs/rules — recommended: build/lint/test commands, architecture, conventions
+    expectedSections: ["rules", "commands", "architecture"],
     vaguenessSensitivity: 1.1,
   },
   warp: {

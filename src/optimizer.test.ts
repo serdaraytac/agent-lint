@@ -189,8 +189,125 @@ describe("optimize", () => {
     const criticalSectionIdx = lines.findIndex((l) => l.includes("Critical Rules"));
     const neverIdx = lines.findIndex((l) => l.toLowerCase().includes("never expose"));
     if (criticalSectionIdx !== -1) {
-      // If a critical section was added, the never line should be near the top
       expect(neverIdx).toBeLessThan(lines.length / 2);
     }
+  });
+
+  describe("platform-specific optimizations", () => {
+    it("adds frontmatter stub to Cursor .cursor/rules/ file missing it", () => {
+      const config = parseConfig(".cursor/rules/typescript.md", "# TypeScript Rules\n- Always use strict mode.");
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.optimizedContent).toMatch(/^---/);
+      expect(result.optimizedContent).toContain("alwaysApply");
+      expect(result.changesSummary.some((c) => c.includes("frontmatter"))).toBe(true);
+    });
+
+    it("does not add Cursor frontmatter if already present", () => {
+      const content = "---\nalwaysApply: true\n---\n# Rules\n- Use strict mode.";
+      const config = parseConfig(".cursor/rules/typescript.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      const frontmatterCount = (result.optimizedContent.match(/^---/gm) ?? []).length;
+      expect(frontmatterCount).toBeLessThanOrEqual(2); // open + close, not duplicated
+    });
+
+    it("converts Cline prose to bullet points", () => {
+      const content = "# Rules\nAlways use TypeScript.\nNever commit secrets.\nWrite tests for every feature.\nDocument public APIs.\nKeep functions small.\nFollow naming conventions.";
+      const config = parseConfig(".clinerules", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      const bulletLines = result.optimizedContent.split("\n").filter((l) => l.startsWith("- "));
+      expect(bulletLines.length).toBeGreaterThan(0);
+      expect(result.changesSummary.some((c) => c.includes("bullet"))).toBe(true);
+    });
+
+    it("fixes Gemini invalid @ import paths to use ./ prefix", () => {
+      const content = "# Rules\n@rules.md\n@styles.md\n- Use TypeScript.";
+      const config = parseConfig("GEMINI.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.optimizedContent).not.toMatch(/@rules\.md/);
+      expect(result.optimizedContent).toContain("@./rules.md");
+      expect(result.changesSummary.some((c) => c.includes("@-import"))).toBe(true);
+    });
+
+    it("fixes Amp bare @mention paths to use ./ prefix", () => {
+      const content = "# Docs\nSee @doc/style.md for conventions.\n";
+      const config = parseConfig("amp-rules.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.optimizedContent).toContain("@./doc/style.md");
+      expect(result.changesSummary.some((c) => c.includes("@-mention"))).toBe(true);
+    });
+
+    it("adds applyTo frontmatter stub to Copilot path-specific file missing it", () => {
+      const content = "# Ruby Rules\n- Always freeze strings.";
+      const config = parseConfig(".github/instructions/ruby.instructions.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.optimizedContent).toMatch(/^---/);
+      expect(result.optimizedContent).toContain("applyTo");
+      expect(result.changesSummary.some((c) => c.includes("applyTo"))).toBe(true);
+    });
+
+    it("uses platform-specific section hint content for Codex stubs", () => {
+      const minimal = "# Conventions\n- Use TypeScript.\n";
+      const config = parseConfig("AGENTS.md", minimal);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      // Codex stubs should contain Codex-specific hints, not generic TODO
+      if (result.optimizedContent.includes("## Testing")) {
+        expect(result.optimizedContent).toContain("Test framework");
+      }
+    });
+
+    it("uses platform-specific section hint content for Gemini stubs", () => {
+      const minimal = "# Instructions\n- Use TypeScript.\n";
+      const config = parseConfig("GEMINI.md", minimal);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      if (result.optimizedContent.includes("## Context")) {
+        expect(result.optimizedContent).toContain("@./");
+      }
+    });
+
+    it("adds Commands section stub to Claude config missing build commands", () => {
+      const content = "# Project\n\n## Rules\n- Always use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.optimizedContent).toContain("## Commands");
+      expect(result.optimizedContent).toContain("```bash");
+      expect(result.changesSummary.some((c) => c.includes("Commands section"))).toBe(true);
+    });
+
+    it("does not add Commands stub when Claude config already has build commands", () => {
+      const content = "# Project\n\n## Commands\n```bash\nnpm test\n```\n\n## Rules\n- Use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const analysis = analyze(config);
+      const before = (content.match(/## Commands/g) ?? []).length;
+      const result = optimize(config, analysis, score(analysis));
+      const after = (result.optimizedContent.match(/## Commands/g) ?? []).length;
+      expect(after).toBe(before);
+    });
+
+    it("reports unfilled placeholders in Claude changesSummary", () => {
+      const content = "# Rules\n- [TODO: define style]\n- [TODO: add test rules]\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      expect(result.changesSummary.some((c) => c.includes("[TODO:]"))).toBe(true);
+      expect(result.changesSummary.some((c) => c.includes("2"))).toBe(true);
+    });
+
+    it("uses claude-specific section hint for commands stub", () => {
+      const content = "# Project\n\n## Rules\n- Always use TypeScript.\n";
+      const config = parseConfig("CLAUDE.md", content);
+      const analysis = analyze(config);
+      const result = optimize(config, analysis, score(analysis));
+      // Commands stub should contain bash code block, not a generic comment
+      expect(result.optimizedContent).toContain("```bash");
+    });
   });
 });

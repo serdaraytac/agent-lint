@@ -1,6 +1,6 @@
 {
   "name": "@serdaraytac/agent-lint",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Analyze, score, and optimize AI coding agent config files",
   "main": "dist/mcp-server.js",
   "bin": {
