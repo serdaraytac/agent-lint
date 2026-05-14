@@ -1,8 +1,8 @@
-# agent-lint
+# config-mode
 
 **Your AI agent is ignoring your rules — and you don’t even know it.**
 
-agent-lint finds why, scores it, and fixes it automatically.
+config-mode finds why, scores it, and fixes it automatically.
 
 ---
 
@@ -24,9 +24,9 @@ because your config files are.
 
 ---
 
-## What agent-lint does
+## What config-mode does
 
-agent-lint analyzes your AI agent configs and fixes them.
+config-mode analyzes your AI agent configs and fixes them.
 
 - **Scores** configs (0–100) across clarity, structure, token efficiency, coverage
 - **Detects vague rules** LLMs can’t execute
@@ -95,9 +95,9 @@ Add to your MCP config:
 ```json
 {
   "mcpServers": {
-    "agent-lint": {
+    "config-mode": {
       "command": "npx",
-      "args": ["-y", "@serdaraytac/agent-lint"]
+      "args": ["-y", "@serdaraytac/config-mode"]
     }
   }
 }
@@ -120,7 +120,7 @@ optimize_config { "filepath": "./AGENTS.md", "write": true }
 
 | Client | Config file |
 |---|---|
-| Claude Code | `~/.claude/claude_desktop_config.json` or `claude mcp add agent-lint -- npx -y @serdaraytac/agent-lint` |
+| Claude Code | `~/.claude/claude_desktop_config.json` or `claude mcp add config-mode -- npx -y @serdaraytac/config-mode` |
 | Cursor | `.cursor/mcp.json` or `~/.cursor/mcp.json` |
 | Cline | VS Code settings → Cline MCP Servers |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
@@ -230,7 +230,7 @@ The optimizer doesn't just flag — it rewrites:
 
 ## How it works
 
-agent-lint combines:
+config-mode combines:
 
 - Linguistic analysis (7 vagueness categories)
 - Platform-specific validation rules
@@ -289,7 +289,16 @@ analyze_config { "filepath": "./CLAUDE.md" }
 ```json
 {
   "platform": "claude",
-  "score": { "overall": 62, "grade": "C" },
+  "score": {
+    "overall": 62,
+    "grade": "C",
+    "categories": {
+      "clarity": 13,
+      "structure": 20,
+      "tokenEfficiency": 22,
+      "coverage": 7
+    }
+  },
   "issues": [
     { "code": "VAGUE_RULE",       "severity": "warning", "message": "[false-shared-context] 'Best practices' is undefined — LLM fills the gap with its own assumptions", "line": 4 },
     { "code": "VAGUE_RULE",       "severity": "warning", "message": "[weak-obligation] 'Try to keep functions small' — use 'always' or remove", "line": 9 },

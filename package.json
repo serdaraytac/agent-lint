@@ -1,10 +1,10 @@
 {
-  "name": "@serdaraytac/agent-lint",
+  "name": "@serdaraytac/config-mode",
   "version": "1.0.3",
   "description": "Analyze, score, and optimize AI coding agent config files",
   "main": "dist/mcp-server.js",
   "bin": {
-    "agent-lint": "dist/mcp-server.js"
+    "config-mode": "dist/mcp-server.js"
   },
   "scripts": {
     "prepare": "npm run build",
@@ -33,11 +33,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/serdaraytac/agent-lint.git"
+    "url": "git+https://github.com/serdaraytac/config-mode.git"
   },
-  "homepage": "https://github.com/serdaraytac/agent-lint#readme",
+  "homepage": "https://github.com/serdaraytac/config-mode#readme",
   "bugs": {
-    "url": "https://github.com/serdaraytac/agent-lint/issues"
+    "url": "https://github.com/serdaraytac/config-mode/issues"
   },
   "engines": {
     "node": ">=22"

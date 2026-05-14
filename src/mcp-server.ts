@@ -52,7 +52,7 @@ const WILDCARD_DIRS = [
 ];
 
 const server = new Server(
-  { name: "agent-lint", version: "1.0.3" },
+  { name: "config-mode", version: "1.0.3" },
   { capabilities: { tools: {} } }
 );
 
